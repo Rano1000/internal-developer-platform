@@ -58,15 +58,18 @@ For the system map, component responsibilities, and release approach, see the [p
 
 ```text
 .
+├── .gitignore                # Excludes local environment files
 ├── README.md                 # Project overview and roadmap
 └── docs/
     ├── architecture.md       # System design and delivery flow
+    ├── local-development.md  # Local cluster setup and verification
     └── assets/
-        └── delivery-flow.gif # Target workflow illustration
+        ├── delivery-flow.gif # Target workflow illustration
+        └── local-cluster.gif # Local environment illustration
 ```
 
 Design decisions, setup instructions, and operations guides will be added under `docs/` as each component is implemented.
 
 ## Getting started
 
-The first runnable release is in development. Local setup and deployment instructions will be published with the example service and Kubernetes environment.
+Follow the [local development guide](docs/local-development.md) to create and verify the kind cluster. The first runnable service is in development; its deployment instructions will be added alongside the service.
