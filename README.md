@@ -24,6 +24,8 @@ The Internal Developer Platform is being built to give engineering teams a repea
 
 The platform is under active development. The workflow and components below describe the target design; the roadmap records implementation progress.
 
+For the system map, component responsibilities, and release approach, see the [platform architecture](docs/architecture.md).
+
 ## Target workflow
 
 1. **Commit:** A developer pushes an application change to Git.
@@ -58,11 +60,12 @@ The platform is under active development. The workflow and components below desc
 .
 ├── README.md                 # Project overview and roadmap
 └── docs/
+    ├── architecture.md       # System design and delivery flow
     └── assets/
         └── delivery-flow.gif # Target workflow illustration
 ```
 
-Architecture notes, design decisions, setup instructions, and operations guides will be added under `docs/` as each component is implemented.
+Design decisions, setup instructions, and operations guides will be added under `docs/` as each component is implemented.
 
 ## Getting started
 
