@@ -2,3 +2,10 @@
 .env
 .env.*
 !.env.example
+
+# Python virtual environments
+.venv/
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
