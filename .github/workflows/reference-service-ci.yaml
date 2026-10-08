@@ -23,3 +23,15 @@ jobs:
 
       - name: Build Docker image
         run: docker build --progress=plain -t reference-service:ci apps/reference-service
+
+      - name: Start application container
+        run: docker run --detach --name reference-service --publish 127.0.0.1:8080:8080 reference-service:ci
+
+      - name: Check application endpoints
+        run: |
+          curl --fail --silent --show-error --max-time 5 \
+            --retry 10 --retry-delay 2 --retry-connrefused \
+            http://127.0.0.1:8080/health
+
+          curl --fail --silent --show-error --max-time 5 \
+            http://127.0.0.1:8080/
