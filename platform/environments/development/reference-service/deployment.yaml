@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: reference-service
-          image: reference-service:0.1.0
+          image: ghcr.io/rano1000/reference-service:adb9fad93884454b3c01aa9349e5e4ba5f684973
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
