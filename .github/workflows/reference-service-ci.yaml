@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build-image:
@@ -36,6 +37,23 @@ jobs:
 
           curl --fail --silent --show-error --max-time 5 \
             http://127.0.0.1:8080/
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+
+      - name: Tag and publish image
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        env:
+          IMAGE_NAME: ghcr.io/rano1000/reference-service
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker tag reference-service:ci "$IMAGE_NAME:$IMAGE_TAG"
+          docker push "$IMAGE_NAME:$IMAGE_TAG"
 
       - name: Show application logs
         if: ${{ always() && steps.start-container.outcome == 'success' }}
