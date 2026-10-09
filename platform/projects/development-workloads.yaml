@@ -16,3 +16,5 @@ spec:
       kind: Deployment
     - group: ""
       kind: Service
+    - group: networking.k8s.io
+      kind: NetworkPolicy
