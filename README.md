@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/status-active_development-7357D9?style=flat-square" alt="Status: active development">
   <img src="https://img.shields.io/badge/runtime-Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white" alt="Runtime: Kubernetes">
   <img src="https://img.shields.io/badge/delivery-Argo_CD-188F89?style=flat-square" alt="Delivery: Argo CD">
-  <img src="https://img.shields.io/badge/milestone-scanned_release_verified-188F89?style=flat-square" alt="Milestone: scanned release verified">
+  <img src="https://img.shields.io/badge/milestone-development_controls_verified-188F89?style=flat-square" alt="Milestone: development controls verified">
 </p>
 
 <p align="center">
@@ -29,6 +29,7 @@
 <p align="center">
   <a href="#current-implementation">Implemented</a> &nbsp;·&nbsp;
   <a href="docs/image-delivery.md">Image delivery</a> &nbsp;·&nbsp;
+  <a href="docs/development-security.md">Security controls</a> &nbsp;·&nbsp;
   <a href="#getting-started">Get started</a> &nbsp;·&nbsp;
   <a href="docs/architecture.md">Architecture</a> &nbsp;·&nbsp;
   <a href="#project-roadmap">Roadmap</a>
@@ -42,7 +43,9 @@ The Internal Developer Platform provides a growing foundation for building, depl
 
 The current implementation connects **GitHub Actions**, **GitHub Container Registry**, and **Argo CD** to a dedicated local Kubernetes environment. CI builds the reference-service image, checks its HTTP endpoints, scans its dependencies, and publishes passing images to GHCR. A Git change selects the image to deploy, and Argo CD reconciles the declared configuration with Kubernetes.
 
-The platform is under active development. Its verified baseline includes resource policies, container security settings, and scoped Argo CD projects. Additional environments, broader access controls, network isolation, and observability remain on the roadmap.
+The verified development baseline includes resource policies, container security settings, application network restrictions, scoped Argo CD projects, and read-only observer access. Additional environments, human access provisioning, managed secrets, and observability remain on the roadmap.
+
+The platform is under active development. The local verification results do not establish production readiness.
 
 ## Current implementation
 
@@ -61,9 +64,11 @@ The platform is under active development. Its verified baseline includes resourc
 | Health checks | HTTP readiness and liveness probes check `/health` with separate timing settings. |
 | Resource budget | The container requests `100m` CPU and `64Mi` memory, with limits of `500m` CPU and `128Mi` memory. |
 | Runtime security | Kubernetes enforces non-root execution, disables privilege escalation, drops Linux capabilities, and applies the runtime's default seccomp profile. |
-| API credentials | Automatic service-account token mounting is disabled for the reference service. |
+| API credentials | Automatic service-account token mounting is disabled for the reference service and observer ServiceAccount. |
+| Network restrictions | A NetworkPolicy limits application ingress to labelled callers in `development` and egress to CoreDNS. |
+| Observer access | A ServiceAccount, Role, and RoleBinding grant read access to development workload status and logs. |
 | Argo CD installation | Kustomize installs Argo CD from the official `v3.5.4` manifests into the `argocd` namespace. |
-| GitOps applications | Separate Applications manage the reference-service workload and development environment policies. |
+| GitOps applications | Separate Applications manage the reference-service workload and development environment resources. |
 | Deployment scope | Separate AppProjects constrain the permitted Git repository, destination, and resource types for each Application. |
 | Automatic sync | Argo CD applies changes to tracked manifests automatically. |
 | Self-healing | Argo CD restores managed configuration when the live cluster differs from Git. |
@@ -94,12 +99,21 @@ See the [image delivery guide](docs/image-delivery.md) for release selection and
 | Namespace limit budget | Aggregate limits up to `2` CPUs and `1Gi` memory. |
 | Pod count | Up to `10` Pods, subject to the resource budgets. |
 | Container defaults | LimitRange supplies requests of `100m` / `64Mi` and limits of `500m` / `128Mi` when omitted. |
-| Workload AppProject | Permits Deployments and Services in `development` from the configured repository. |
-| Environment AppProject | Permits the `development` Namespace and its ResourceQuota and LimitRange. |
+| Application ingress | TCP port `8080` from same-namespace Pods labelled `access: reference-service`. |
+| Application egress | DNS over UDP and TCP port `53` to CoreDNS Pods in `kube-system`. |
+| Observer permissions | Read Pods, Services, Events, Deployments, ReplicaSets, and Pod logs in `development`. |
+| Workload AppProject | Permits Deployments, Services, and NetworkPolicies in `development` from the configured repository. |
+| Environment AppProject | Permits the `development` Namespace, ResourceQuota, LimitRange, ServiceAccounts, Roles, and RoleBindings. |
 
 ResourceQuota checks declared resource totals rather than live CPU or memory consumption. A workload must fit every applicable budget.
 
-The AppProjects constrain deployment through Argo CD. Kubernetes RBAC and enforced network isolation are separate controls on the roadmap.
+The NetworkPolicy selects reference-service Pods. It does not isolate every Pod in the namespace, and the caller label is a traffic-selection convention rather than an authentication mechanism.
+
+The AppProjects constrain deployment through Argo CD. Kubernetes RBAC separately controls API access, while NetworkPolicy controls selected Pod traffic.
+
+The observer identity has been tested for allowed status and log access, denied Deployment modification, denied Secret access, and denied Pod listing in `argocd`. It does not provision a human login or deploy an observer application.
+
+See the [development security guide](docs/development-security.md) for policy details, verification commands, and limitations.
 
 ## GitOps behavior
 
@@ -113,11 +127,13 @@ The AppProjects constrain deployment through Argo CD. Kubernetes RBAC and enforc
 | Self-healing | Enabled for both Applications. |
 | Automatic pruning | Disabled. Removing a manifest from Git does not automatically delete its live resource. |
 
-The workload Application manages the Deployment and Service. The environment Application manages the Namespace, ResourceQuota, and LimitRange without including the nested workload directory.
+The workload Application manages the Deployment, Service, and NetworkPolicy. The environment Application manages the Namespace, resource policies, and observer access resources without including the nested workload directory.
 
-Application and AppProject definitions live in `argocd`. The application workload and namespace policies apply to `development`.
+Application and AppProject definitions live in `argocd`. The application workload and environment resources apply to `development`.
 
 Argo CD, its AppProjects, and its Application definitions are bootstrapped separately. The current Applications manage their configured manifest paths; they do not manage their own definitions or the Argo CD installation.
+
+Git polling is periodic. Check the reported revision before interpreting `Synced` as confirmation that the latest commit has been deployed.
 
 ## Verified behavior
 
@@ -127,15 +143,27 @@ The implemented baseline has been checked through:
 - A passing HIGH/CRITICAL vulnerability scan before image publication.
 - Pulling a published GHCR image into Kubernetes.
 - Confirming the selected image is running and ready.
-- Successful requests to both endpoints through the Kubernetes Service's DNS name.
+- Successful requests to both endpoints through the Kubernetes Service's DNS name before application network restrictions were introduced.
 - Git-driven scaling from one replica to two and back to one.
 - Restoring one replica after the live Deployment was manually scaled to two.
 - ResourceQuota rejecting an over-budget server-side dry-run request.
 - LimitRange injecting resource defaults during a server-side dry run.
 - Runtime checks confirming UID/GID `10001`, dropped capabilities, no privilege escalation, seccomp filtering, and no mounted API token.
+- A labelled client reaching `/health` while an unlabelled client timed out.
+- The protected application resolving its Service name through DNS.
+- The protected application timing out when connecting to a temporary HTTP server that an unrestricted client could reach.
+- The observer identity listing development Pods and reading application logs.
+- Authorization checks denying observer Deployment modification, Secret access, and Pod listing in `argocd`.
+- Automatic reconciliation of the observer configuration from Git.
 - Both Applications reporting **Synced** and **Healthy** under their assigned AppProjects.
 
 A passing scan reflects the selected severities and vulnerability database available at scan time. Findings can change as the database is updated.
+
+### Reliability observations
+
+Controller DNS failures and kindnet API watch timeouts occurred during local operation. Targeted restarts restored the affected behavior, and network enforcement was subsequently verified with allowed and denied connections.
+
+The underlying causes remain unresolved. These recoveries do not establish a permanent fix. The [development security guide](docs/development-security.md) records the network-controller incident and diagnostic commands.
 
 ## Getting started
 
@@ -188,14 +216,14 @@ kubectl apply --context kind-internal-developer-platform \
   -f platform/projects/development-workloads.yaml
 ```
 
-Register the environment Application so Argo CD manages the namespace and resource policies:
+Register the environment Application so Argo CD manages the namespace, resource policies, and observer access:
 
 ```bash
 kubectl apply --context kind-internal-developer-platform \
   -f platform/applications/development-environment.yaml
 ```
 
-Register the workload Application so Argo CD deploys the reference service from Git:
+Register the workload Application so Argo CD deploys the reference service and its network policy from Git:
 
 ```bash
 kubectl apply --context kind-internal-developer-platform \
@@ -209,7 +237,7 @@ kubectl get applications --namespace argocd \
   --context kind-internal-developer-platform
 ```
 
-Expect **Synced** and **Healthy** once reconciliation completes. If an Application reports an error, inspect its conditions before continuing.
+Expect **Synced** and **Healthy** once reconciliation completes. Confirm their reported revisions match the intended Git revision. If an Application reports an error, inspect its conditions before continuing.
 
 ### Access the reference service
 
@@ -238,6 +266,8 @@ Expected response:
 | `http://127.0.0.1:8080/` | Returns the service name and application version. |
 | `http://127.0.0.1:8080/health` | Returns the application's health response. |
 
+Port forwarding provides administrative access for local inspection. Use Pod-to-Pod traffic tests to verify the network policy, as described in the security guide.
+
 ## Documentation
 
 | Guide | Coverage |
@@ -245,6 +275,7 @@ Expected response:
 | [Architecture](docs/architecture.md) | Target design, component responsibilities, and delivery boundaries. |
 | [Local development](docs/local-development.md) | Local setup, verification, access, and recovery. |
 | [Image delivery](docs/image-delivery.md) | CI checks, the vulnerability gate, release identity, image selection, and deployment verification. |
+| [Development security](docs/development-security.md) | Resource budgets, container settings, network restrictions, observer permissions, and recovery observations. |
 
 ## Project roadmap
 
@@ -252,11 +283,13 @@ Expected response:
 | --- | --- | --- |
 | Foundation | Repository structure, platform architecture, and Git workflow | Complete |
 | Workload | Local Kubernetes cluster, reference service, internal routing, and health probes | Complete — local baseline |
-| Delivery | CI checks, vulnerability scanning, image publishing, GitOps deployment, and drift correction | In progress — scanned release verified |
-| Guardrails | Resource policies, scoped deployment permissions, environment boundaries, and security controls | In progress — resource and runtime controls implemented |
+| Delivery | CI checks, vulnerability scanning, image publishing, GitOps deployment, and drift correction | In progress — core workflow verified; controller reliability investigation remains |
+| Guardrails | Resource policies, scoped deployment permissions, environment boundaries, and security controls | In progress — resource, runtime, network, and observer access controls verified |
 | Operations | Metrics, dashboards, and expanded recovery procedures | Planned |
 
-Further work includes additional environments, external routing and TLS, autoscaling, Kubernetes access controls, network policy enforcement, secrets management, and observability.
+Further work includes additional environments, external routing and TLS, autoscaling, human authentication and access provisioning, secrets management, networking reliability, and observability.
+
+The current service has no secret dependency. A managed application-secret system has not been implemented. The container filesystem also remains writable.
 
 ## Repository layout
 
@@ -275,6 +308,7 @@ Further work includes additional environments, external routing and TLS, autosca
 │       └── requirements.txt               # Application dependency versions
 ├── docs/
 │   ├── architecture.md                    # Target design and responsibilities
+│   ├── development-security.md            # Controls, verification, and limitations
 │   ├── image-delivery.md                  # Image checks and release selection
 │   ├── local-development.md               # Local setup and recovery
 │   └── assets/
@@ -282,7 +316,7 @@ Further work includes additional environments, external routing and TLS, autosca
 │       └── local-cluster.gif              # Local environment illustration
 └── platform/
     ├── applications/
-    │   ├── development-environment.yaml   # Namespace and policy reconciliation
+    │   ├── development-environment.yaml   # Environment resource reconciliation
     │   └── reference-service-development.yaml
     ├── components/
     │   └── argocd/
@@ -292,9 +326,13 @@ Further work includes additional environments, external routing and TLS, autosca
     │   └── development/
     │       ├── limit-range.yaml           # Default container resource settings
     │       ├── namespace.yaml             # Development namespace
+    │       ├── observer-role-binding.yaml # Assigns observer permissions
+    │       ├── observer-role.yaml         # Read-only workload permissions
+    │       ├── observer-service-account.yaml
     │       ├── resource-quota.yaml        # Aggregate namespace resource budget
     │       └── reference-service/
     │           ├── deployment.yaml        # Image, probes, resources, and security
+    │           ├── network-policy.yaml    # Application traffic restrictions
     │           └── service.yaml           # Internal application routing
     └── projects/
         ├── development-environment.yaml   # Environment deployment permissions
@@ -306,8 +344,9 @@ Application source and image packaging live under `apps/`. Shared platform insta
 ---
 
 <p align="center">
-  <strong>Current milestone: scanned image deployed and verified through GitOps.</strong><br>
+  <strong>Current milestone: scanned GitOps release with verified development controls.</strong><br>
   <a href="#getting-started">Run the local platform</a> &nbsp;·&nbsp;
   <a href="docs/image-delivery.md">Follow the release process</a> &nbsp;·&nbsp;
+  <a href="docs/development-security.md">Inspect security controls</a> &nbsp;·&nbsp;
   <a href="https://github.com/Rano1000/internal-developer-platform/actions">View delivery runs</a>
 </p>
