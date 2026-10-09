@@ -5,124 +5,276 @@
 <h1 align="center">Platform Architecture</h1>
 
 <p align="center">
-  From an application change to a controlled, observable Kubernetes release.
+  From an application change to a scanned image, a controlled Kubernetes deployment, and resource dashboards.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/design-draft-7357D9?style=flat-square" alt="Design status: draft">
-  <img src="https://img.shields.io/badge/first_release-local_cluster-326CE5?style=flat-square" alt="First release: local cluster">
-  <img src="https://img.shields.io/badge/deployment_model-GitOps-188F89?style=flat-square" alt="Target deployment model: GitOps">
+  <img src="https://img.shields.io/badge/scope-local_MVP-7357D9?style=flat-square" alt="Scope: local MVP">
+  <img src="https://img.shields.io/badge/runtime-kind_cluster-326CE5?style=flat-square" alt="Runtime: kind cluster">
+  <img src="https://img.shields.io/badge/deployment_model-GitOps-188F89?style=flat-square" alt="Deployment model: GitOps">
 </p>
 
 <p align="center">
-  <img src="assets/delivery-flow.gif" width="960" alt="Animated target delivery path from Git through CI, registry, Argo CD, Kubernetes, and metrics">
+  <img src="assets/delivery-flow.gif" width="960" alt="Animated delivery path from Git through CI, registry, Argo CD, Kubernetes, and metrics">
 </p>
 
 <p align="center">
   <a href="../README.md">Project overview</a> &nbsp;·&nbsp;
   <a href="#system-map">System map</a> &nbsp;·&nbsp;
-  <a href="#first-runnable-release">First release</a> &nbsp;·&nbsp;
+  <a href="#application-runtime">Application runtime</a> &nbsp;·&nbsp;
+  <a href="#monitoring">Monitoring</a> &nbsp;·&nbsp;
   <a href="#design-decisions">Design decisions</a>
 </p>
 
 ---
 
-This document describes the **target architecture**. The platform is under active development; the [roadmap](../README.md#project-roadmap) records implementation status.
+This document describes the implemented local MVP, first marked by release tag **v0.1.0**. It covers the delivery workflow, runtime boundaries, development controls, and monitoring verified in the local environment.
 
 ## Design intent
 
-The platform gives developers a consistent route to deploy containerized applications. Application source, built images, and deployment configuration have distinct roles, so a team can answer three questions at any time: **What changed? Which image is running? Why is that version deployed?**
+The platform provides a repeatable route for building and deploying a containerized service. Application source, published images, and deployment configuration have distinct responsibilities.
 
-The first implementation stays deliberately small: one local cluster and one example service. Each later component must make that path more repeatable, secure, or observable.
+The implementation makes three questions answerable:
+
+- What source change produced the image?
+- Which image has been selected for deployment?
+- Does the running workload match the configuration in Git?
+
+The MVP uses one local Kubernetes cluster, one development environment, and one reference service.
 
 ## System map
 
 ```mermaid
 flowchart LR
-    dev["Developer"] --> source["Application source<br/>Git"]
-    source --> ci["CI<br/>test · build · scan"]
-    ci --> registry[("Image registry")]
+    developer["Developer"] --> source["Application source<br/>GitHub"]
+    source --> ci["GitHub Actions<br/>build · endpoint checks · scan"]
+    ci --> registry["GitHub Container Registry"]
 
-    dev --> change["Reviewed release change"]
-    registry -.-> change
-    change --> config["Deployment configuration<br/>Git"]
-    config --> argo["Argo CD"]
-    argo --> cluster["Kubernetes<br/>development environment"]
-    registry -.-> cluster
-    cluster --> observe["Health checks<br/>metrics · dashboards"]
+    developer --> release["Select image tag<br/>commit deployment configuration"]
+    registry -.->|published image tag| release
+    release --> config["Deployment manifests<br/>GitHub main"]
+    config --> argo["Argo CD<br/>automatic sync · self-healing"]
+    argo --> workload["Reference service<br/>development namespace"]
+    registry -.->|image pull| workload
 
     classDef buildStep fill:#192E4D,color:#FFFFFF,stroke:#4B8FD6;
     classDef releaseStep fill:#194740,color:#FFFFFF,stroke:#44BFA6;
     classDef runtimeStep fill:#382B52,color:#FFFFFF,stroke:#9B7CDD;
     class source,ci,registry buildStep;
-    class change,config,argo releaseStep;
-    class cluster,observe runtimeStep;
+    class release,config,argo releaseStep;
+    class workload runtimeStep;
 ```
 
-Solid arrows show a change moving through the workflow. Dotted arrows show the image version being selected for release and pulled by the cluster. The release change updates deployment configuration through review; CI does not write directly to the cluster.
+Application source and deployment manifests live in the same repository. They are shown separately because building an image and selecting it for deployment are separate actions.
+
+CI publishes passing images. The developer selects a published image by updating the Deployment manifest. Argo CD reads that configuration and reconciles the cluster.
+
+Publishing an image does not automatically update the Deployment. CI does not connect directly to the Kubernetes cluster.
 
 ## Component responsibilities
 
-| Component | Responsibility | Output or evidence |
+| Component | Responsibility | Evidence |
 | --- | --- | --- |
-| Application source | Holds service code and its tests. | A reviewed source change. |
-| CI | Runs checks, builds an image, and scans it. | A verified, versioned image. |
-| Image registry | Stores images that the cluster can pull. | An immutable image reference. |
-| Deployment configuration | Declares the chosen image and environment settings in Git. | A reviewable release change. |
-| Argo CD | Reconciles approved configuration with the cluster. | A visible sync state. |
-| Kubernetes | Runs the service within resource and access boundaries. | A reachable, healthy workload. |
-| Observability | Collects service health and performance signals. | Metrics and dashboards for investigation. |
+| GitHub repository | Versions application code, automation, platform configuration, and documentation. | Commits, manifest changes, and release tags. |
+| GitHub Actions | Builds the image, checks HTTP endpoints, scans vulnerabilities, and publishes passing images. | Workflow logs and CI status. |
+| Trivy | Checks the application image for HIGH and CRITICAL vulnerabilities, including findings without fixes. | Scan results and a publication gate. |
+| GitHub Container Registry | Stores application images tagged with the source commit SHA. | A published image reference. |
+| Argo CD | Reconciles tracked development manifests and corrects drift. | Application revision, sync status, and health status. |
+| Kubernetes | Runs the application and enforces configured resource, runtime, and access controls. | Workload readiness and policy checks. |
+| Prometheus | Collects and stores Kubernetes metrics. | Scrape status and historical queries. |
+| Grafana | Displays dashboards backed by Prometheus. | Workload resource and network panels. |
+
+The Python base image is pulled from the Docker Official Images repository on ECR Public. Built application images are published to GHCR.
+
+Commit-based image tags identify the build used for release selection. The current Deployment uses a tag rather than a digest, so the reference is not enforced as immutable.
+
+## Cluster and namespace boundaries
+
+The runtime is a single-node kind cluster named `internal-developer-platform`.
+
+Commands use the Kubernetes context `kind-internal-developer-platform`.
+
+| Namespace | Responsibility |
+| --- | --- |
+| `argocd` | Argo CD controllers, AppProjects, and Application definitions. |
+| `development` | Reference-service resources, namespace budgets, resource defaults, and observer access. |
+| `monitoring` | Prometheus, Grafana, the monitoring operator, and supporting collectors. |
+| `kube-system` | Kubernetes system components, CoreDNS, kindnet, and kube-proxy. |
+
+Namespaces organize resources and provide scopes for policy. They share the same local node and cluster.
+
+The development ResourceQuota applies to `development`. Monitoring has separately configured container budgets in its Helm values.
+
+## GitOps ownership
+
+Two Argo CD Applications divide responsibility:
+
+| Application | Git path | Managed resources |
+| --- | --- | --- |
+| `development-environment` | `platform/environments/development` | Namespace, ResourceQuota, LimitRange, and observer ServiceAccount, Role, and RoleBinding. |
+| `reference-service-development` | `platform/environments/development/reference-service` | Deployment, Service, and NetworkPolicy. |
+
+Directory recursion is disabled for the environment Application. This keeps the nested reference-service resources under the workload Application.
+
+Both Applications track `main`, use automatic sync, and enable self-healing. Automatic pruning is disabled.
+
+Separate AppProjects constrain the source repository, destination, and permitted resource types:
+
+- `development-environment` permits the development namespace, resource policies, and observer access resources.
+- `development-workloads` permits Deployments, Services, and NetworkPolicies in `development`.
+
+Argo CD installation, AppProjects, and Application definitions are bootstrapped with kubectl. The current Applications do not manage their own definitions.
+
+Monitoring configuration is versioned in Git and applied through Helm.
 
 ## Application runtime
 
-The target runtime gives application users one controlled entry point and gives operators a separate path to inspect service health:
+The reference service uses Flask and Gunicorn, listens on port `8080`, and runs as one replica.
+
+| Endpoint | Response |
+| --- | --- |
+| `/` | Service name and application version. |
+| `/health` | Application health status. |
+
+A ClusterIP Service selects reference-service Pods by label.
 
 ```mermaid
 flowchart LR
-    client["Application user"] --> gateway["Gateway / Ingress<br/>TLS"]
-    gateway --> service["Kubernetes Service"]
-    service --> pods["Application pods"]
-    prometheus["Prometheus"] -->|scrapes metrics| pods
-    grafana["Grafana"] -->|queries| prometheus
+    client["Allowed client Pod<br/>development namespace<br/>access: reference-service"]
+    service["ClusterIP Service<br/>reference-service:8080"]
+    pod["Reference-service Pod<br/>Flask · Gunicorn"]
+
+    client -->|TCP 8080| service
+    service --> pod
+    operator["Operator"] --> forward["kubectl port-forward"]
+    forward -->|local inspection| service
+    kubelet["Kubelet"] -->|readiness and liveness probes| pod
 ```
 
-The first runnable release only needs local access. A Gateway or Ingress and TLS will be added when the application needs a stable external route.
+Labelled clients in `development` can reach the service over TCP port `8080`. The application NetworkPolicy permits outgoing DNS traffic to CoreDNS over UDP and TCP port `53`.
 
-| Boundary | Target control |
+Port forwarding provides local administrative access. Pod-to-Pod connection tests are used to verify NetworkPolicy enforcement.
+
+Readiness and liveness probes both use `/health`, with different timing settings.
+
+## Development controls
+
+| Control | Implemented behavior |
 | --- | --- |
-| Workload access | RBAC limits who can change resources in each namespace. |
-| Network access | Network policies allow only the traffic each service needs. |
-| Shared resources | Requests, limits, and quotas prevent one workload from consuming the cluster. |
-| Configuration and secrets | Real credentials stay out of Git; the delivery mechanism will be selected before secrets are required. |
+| Container requests | `100m` CPU and `64Mi` memory. |
+| Container limits | `500m` CPU and `128Mi` memory. |
+| ResourceQuota | Bounds aggregate declared requests, limits, and Pod count in `development`. |
+| LimitRange | Supplies default container requests and limits when omitted. |
+| Runtime identity | Enforces non-root execution with user and group ID `10001`. |
+| Runtime privileges | Disables privilege escalation, drops Linux capabilities, and uses `RuntimeDefault` seccomp. |
+| API token mounting | Disabled for the reference-service Pod and observer ServiceAccount. |
+| NetworkPolicy | Restricts selected application Pods to labelled ingress callers and DNS egress. |
+| Observer RBAC | Allows development workload status and log access without modification or Secret access. |
 
-## First runnable release
+These controls act at different boundaries:
 
-The first release has a narrow acceptance target:
+- AppProjects constrain deployments through Argo CD.
+- Kubernetes RBAC controls Kubernetes API operations.
+- NetworkPolicy controls selected Pod traffic.
+- Resource policies control declared resource budgets.
+- Security contexts constrain container execution.
 
-1. A local Kubernetes cluster can be created from documented steps.
-2. One example HTTP service runs in a development environment.
-3. The service exposes a health endpoint and can be reached locally.
-4. Its deployment configuration is stored in Git and contains no real credentials.
+NetworkPolicy rules are additive. The caller label selects permitted traffic; it is not an authentication mechanism.
 
-CI, GitOps reconciliation, staging, and dashboards follow once this baseline works. This gives every later addition a real service to validate against.
+The observer is a Kubernetes ServiceAccount. Its permissions were verified using administrator impersonation, including allowed status and log reads and denied modification, Secret access, and cross-namespace Pod listing.
 
-## Release and recovery path
+See the [development security guide](development-security.md) for the full policies and verification procedures.
 
-When the delivery workflow is in place, CI will publish a versioned image after its checks pass. A release change will select that exact image reference in Git. After review, Argo CD will apply the desired state to Kubernetes. The team will verify service health before promoting the same image to another environment.
+## Monitoring
 
-If a release is unhealthy, the recovery path is to revert the deployment change in Git and let Argo CD reconcile the previous known-good image. The image itself stays available in the registry, so recovery does not depend on rebuilding it.
+The monitoring stack is installed as Helm release `monitoring` using `kube-prometheus-stack` chart version `92.2.0`.
 
-## Environment boundaries
+```mermaid
+flowchart LR
+    kubelet["Kubelet<br/>container usage and probe metrics"]
+    state["kube-state-metrics<br/>object state · requests · limits"]
+    node["Node exporter<br/>kind node metrics"]
+    prometheus["Prometheus"]
+    grafana["Grafana"]
+    operator["Operator browser"]
 
-The first runnable service uses a development environment in a local cluster. Staging is added after the delivery path works. Separate namespaces will organize workloads and allow distinct access and resource policies; a local cluster is not presented as a production isolation boundary.
+    kubelet -->|scraped metrics| prometheus
+    state -->|scraped metrics| prometheus
+    node -->|scraped metrics| prometheus
+    grafana -->|queries| prometheus
+    operator -->|local port forwarding| grafana
+```
+
+Prometheus collects Kubernetes infrastructure and workload resource metrics. Grafana displays CPU and memory usage relative to requests and limits, along with Kubernetes network dashboards.
+
+The reference service does not currently expose an application metrics endpoint. Its HTTP request counts, latency, and error rates are not collected by this architecture.
+
+| Setting | Configuration |
+| --- | --- |
+| Prometheus replicas | `1` |
+| Scrape and evaluation intervals | `30s` |
+| Retention | Bounded by `24h` and a size threshold of `1GiB` |
+| Prometheus storage | `2Gi` persistent volume claim |
+| Grafana storage | `1Gi` persistent volume claim |
+| Storage class | `standard`, using local-path provisioning |
+| Grafana credentials | Existing Kubernetes Secret `monitoring-grafana-admin`, created outside Git |
+| Alertmanager | Disabled |
+
+Grafana's main container requests `512Mi` memory and has a `1Gi` limit. A startup probe allows initialization before normal readiness and liveness checks take over.
+
+See the [monitoring guide](monitoring.md) for installation, access, dashboards, and diagnostics.
+
+## Release identity and recovery
+
+CI tags published application images with the source commit SHA. The Deployment manifest records the selected image.
+
+The Argo CD sync revision identifies the repository configuration being reconciled. It can differ from the image tag because a deployment change is committed after the image build.
+
+Release tag `v0.1.0` marks the verified platform repository snapshot. It is separate from the reference-service image tag.
+
+Git-driven scaling and self-healing were verified. A previous image can be selected by committing its reference in the Deployment manifest; a failed application-release rollback exercise has not been recorded.
+
+Monitoring recovery was verified by replacing the Prometheus pod and promptly repeating a query for data from thirty minutes earlier. The replacement became ready, and the historical value remained available.
+
+This demonstrates metric-history retention across pod replacement while the persistent volume remains available. Local-path storage does not provide recovery after node, volume, or cluster loss.
+
+## Verified local MVP
+
+The implementation has demonstrated:
+
+- A running reference service with working health and metadata endpoints.
+- CI image builds, endpoint checks, vulnerability scanning, and GHCR publishing.
+- Git-driven deployment changes and correction of live configuration drift.
+- Resource quota rejection and automatic resource defaults.
+- Container runtime restrictions.
+- Allowed and denied network connections.
+- Scoped observer status and log access.
+- Ready monitoring components and populated resource dashboards.
+- Historical metric retention across Prometheus pod replacement.
+
+During local operation, Argo CD controller DNS failures and kindnet API watch timeouts required targeted restarts. Operation recovered, but the underlying causes remain unresolved.
+
+The MVP is a verified local environment. Its single-node runtime and tested recovery scope do not establish production readiness.
 
 ## Design decisions
 
 | Decision | Reason |
 | --- | --- |
-| Keep deployment intent in Git. | Changes can be reviewed, compared, and reverted. |
-| Deploy an immutable image reference. | The running artifact can be traced to a particular build. |
-| Keep CI out of direct cluster deployment. | Argo CD remains responsible for applying the approved state. |
-| Start with one service and one local cluster. | A small baseline makes each new platform component testable. |
+| Keep application code and platform configuration in one repository. | Makes the MVP's delivery path easy to inspect and reproduce. |
+| Select releases through Git manifest changes. | Records which image should run and why. |
+| Publish images with source commit tags. | Links release selection to the corresponding build. |
+| Let Argo CD apply workload configuration. | Keeps deployment reconciliation separate from CI. |
+| Separate environment and workload Applications. | Gives each a clear set of managed resources and deployment permissions. |
+| Use explicit container budgets and namespace policies. | Defines scheduling needs and resource boundaries. |
+| Bootstrap shared components with Kustomize and Helm. | Records installation configuration using the components' existing packaging. |
+| Use persistent monitoring volumes. | Retains data across pod replacement in the local cluster. |
+| Keep credentials outside Git. | Avoids storing the Grafana administrator password in repository history. |
 
-The local cluster implementation, image registry, application entry point, and secrets approach will be selected when their requirements are clear. Each choice will be recorded with its reason and tradeoffs.
+## Related guides
+
+| Guide | Coverage |
+| --- | --- |
+| [Local development](local-development.md) | Cluster setup, access, and local recovery. |
+| [Image delivery](image-delivery.md) | CI, scanning, image selection, and deployment verification. |
+| [Development security](development-security.md) | Resource, runtime, network, and observer access controls. |
+| [Monitoring](monitoring.md) | Monitoring installation, dashboards, storage, and recovery checks. |
