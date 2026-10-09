@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: development-environment
+  namespace: argocd
+spec:
+  description: Namespace and resource policies for the development environment
+  sourceRepos:
+    - https://github.com/Rano1000/internal-developer-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: development
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+      name: development
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange

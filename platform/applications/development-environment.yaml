@@ -4,7 +4,7 @@ metadata:
   name: development-environment
   namespace: argocd
 spec:
-  project: default
+  project: development-environment
   source:
     repoURL: https://github.com/Rano1000/internal-developer-platform.git
     targetRevision: main

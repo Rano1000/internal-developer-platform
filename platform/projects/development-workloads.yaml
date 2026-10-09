@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: development-workloads
+  namespace: argocd
+spec:
+  description: Application workloads in the development environment
+  sourceRepos:
+    - https://github.com/Rano1000/internal-developer-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: development
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
