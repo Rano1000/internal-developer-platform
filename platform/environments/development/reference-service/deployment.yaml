@@ -15,10 +15,22 @@ spec:
       labels:
         app: reference-service
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: reference-service
           image: ghcr.io/rano1000/reference-service:adb9fad93884454b3c01aa9349e5e4ba5f684973
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: http
               containerPort: 8080
