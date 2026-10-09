@@ -1,4 +1,4 @@
-FROM python:3.14.8-alpine3.24
+FROM public.ecr.aws/docker/library/python:3.14.8-alpine3.24
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
