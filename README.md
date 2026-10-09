@@ -5,14 +5,14 @@
 <h1 align="center">Internal Developer Platform</h1>
 
 <p align="center">
-  From a Git change to a scanned image and a healthy Kubernetes workload.
+  From a Git change to a scanned image, a healthy Kubernetes workload, and resource dashboards.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-active_development-7357D9?style=flat-square" alt="Status: active development">
   <img src="https://img.shields.io/badge/runtime-Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white" alt="Runtime: Kubernetes">
   <img src="https://img.shields.io/badge/delivery-Argo_CD-188F89?style=flat-square" alt="Delivery: Argo CD">
-  <img src="https://img.shields.io/badge/milestone-development_controls_verified-188F89?style=flat-square" alt="Milestone: development controls verified">
+  <img src="https://img.shields.io/badge/milestone-monitoring_baseline_verified-188F89?style=flat-square" alt="Milestone: monitoring baseline verified">
 </p>
 
 <p align="center">
@@ -23,13 +23,14 @@
 
 <p align="center">
   <img src="docs/assets/delivery-flow.gif" width="960" alt="Animated target delivery path: Git, CI, registry, Argo CD, Kubernetes, and metrics"><br>
-  <sub>Target delivery architecture · CI, image scanning, registry publishing, and GitOps are implemented; metrics and dashboards are planned.</sub>
+  <sub>Target delivery architecture · CI, image scanning, registry publishing, GitOps, and Kubernetes resource dashboards are implemented.</sub>
 </p>
 
 <p align="center">
   <a href="#current-implementation">Implemented</a> &nbsp;·&nbsp;
   <a href="docs/image-delivery.md">Image delivery</a> &nbsp;·&nbsp;
   <a href="docs/development-security.md">Security controls</a> &nbsp;·&nbsp;
+  <a href="docs/monitoring.md">Monitoring</a> &nbsp;·&nbsp;
   <a href="#getting-started">Get started</a> &nbsp;·&nbsp;
   <a href="docs/architecture.md">Architecture</a> &nbsp;·&nbsp;
   <a href="#project-roadmap">Roadmap</a>
@@ -43,7 +44,11 @@ The Internal Developer Platform provides a growing foundation for building, depl
 
 The current implementation connects **GitHub Actions**, **GitHub Container Registry**, and **Argo CD** to a dedicated local Kubernetes environment. CI builds the reference-service image, checks its HTTP endpoints, scans its dependencies, and publishes passing images to GHCR. A Git change selects the image to deploy, and Argo CD reconciles the declared configuration with Kubernetes.
 
-The verified development baseline includes resource policies, container security settings, application network restrictions, scoped Argo CD projects, and read-only observer access. Additional environments, human access provisioning, managed secrets, and observability remain on the roadmap.
+The verified development baseline includes resource policies, container security settings, application network restrictions, scoped Argo CD projects, and read-only observer access.
+
+**Prometheus** collects Kubernetes metrics, and **Grafana** displays workload CPU, memory, and network dashboards. Persistent storage has been verified to retain historical metrics across a Prometheus pod replacement.
+
+Additional environments, human access provisioning, managed secrets, application-specific telemetry, alert notifications, and broader recovery procedures remain on the roadmap.
 
 The platform is under active development. The local verification results do not establish production readiness.
 
@@ -55,6 +60,7 @@ The platform is under active development. The local verification results do not 
 | Development environment | A namespace, ResourceQuota, and LimitRange declared in Git. |
 | Reference service | Flask and Gunicorn expose service metadata at `/` and health status at `/health`. |
 | Container image | An Alpine-based Python image installs application dependencies and removes pip from the runtime filesystem. |
+| Base image source | The Dockerfile pulls the Python base image from the Docker Official Images repository on ECR Public. |
 | Container identity | The application runs with user and group ID `10001`. |
 | Continuous integration | GitHub Actions builds the image, starts a container, checks both HTTP endpoints, scans vulnerabilities, and displays application logs. |
 | Security gate | Trivy blocks publication when it detects HIGH or CRITICAL vulnerabilities, including findings without available fixes. |
@@ -72,6 +78,11 @@ The platform is under active development. The local verification results do not 
 | Deployment scope | Separate AppProjects constrain the permitted Git repository, destination, and resource types for each Application. |
 | Automatic sync | Argo CD applies changes to tracked manifests automatically. |
 | Self-healing | Argo CD restores managed configuration when the live cluster differs from Git. |
+| Monitoring installation | A Helm script installs the pinned `kube-prometheus-stack` chart, version `92.2.0`, into `monitoring`. |
+| Metrics collection | Prometheus collects Kubernetes metrics, including kubelet, kube-state-metrics, and node-exporter data. |
+| Dashboards | Grafana displays Kubernetes resource and network dashboards. |
+| Monitoring persistence | Prometheus and Grafana use local-path persistent volumes. Metric history survived a Prometheus pod replacement. |
+| Grafana credentials | A manually provisioned Kubernetes Secret supplies the administrator credentials outside Git. |
 
 ## Delivery workflow
 
@@ -82,6 +93,7 @@ The platform is under active development. The local verification results do not 
 5. **Select a release:** Update the image reference in the development Deployment, then commit and push that configuration.
 6. **Reconcile:** Argo CD reads the manifests from Git and applies the declared configuration to Kubernetes.
 7. **Verify:** Confirm the Git revision, running image, readiness, and responses through the Kubernetes Service.
+8. **Observe:** Inspect workload resource usage in Grafana.
 
 > **Release selection is explicit.** Publishing a new image does not automatically change the deployed version. The image reference committed in the Deployment determines the selected release.
 
@@ -133,7 +145,32 @@ Application and AppProject definitions live in `argocd`. The application workloa
 
 Argo CD, its AppProjects, and its Application definitions are bootstrapped separately. The current Applications manage their configured manifest paths; they do not manage their own definitions or the Argo CD installation.
 
+Monitoring is also bootstrapped separately through Helm. Its configuration is versioned in Git, but changing that configuration requires running the monitoring installation script.
+
 Git polling is periodic. Check the reported revision before interpreting `Synced` as confirmation that the latest commit has been deployed.
+
+## Monitoring
+
+The monitoring stack runs in its own namespace, separate from the development workload's resource quota.
+
+| Setting | Current configuration |
+| --- | --- |
+| Chart | `prometheus-community/kube-prometheus-stack`, version `92.2.0`. |
+| Prometheus | One replica, with scrape and evaluation intervals of `30s`. |
+| Retention | Bounded by `24h` and a size threshold of `1GiB`. |
+| Prometheus storage | A `2Gi` persistent volume claim using `standard`. |
+| Grafana storage | A `1Gi` persistent volume claim using `standard`. |
+| Grafana memory | A request of `512Mi` and limit of `1Gi` for the main container. |
+| Grafana access | Local port forwarding with administrator credentials from an existing Secret. |
+| Alertmanager | Disabled in the current baseline. |
+
+Grafana's development workload dashboards show actual CPU and memory consumption relative to configured requests and limits. Network dashboards also display Kubernetes Pod traffic.
+
+The current stack collects infrastructure and workload resource metrics. Application-specific HTTP request counts, latency, and error rates have not been instrumented.
+
+Local-path volumes retain data across pod replacement while the node and volumes remain available. They are not a backup or a recovery mechanism for deletion of the kind cluster.
+
+See the [monitoring guide](docs/monitoring.md) for installation, browser access, dashboard checks, troubleshooting, and the metric-history recovery procedure.
 
 ## Verified behavior
 
@@ -156,8 +193,17 @@ The implemented baseline has been checked through:
 - Authorization checks denying observer Deployment modification, Secret access, and Pod listing in `argocd`.
 - Automatic reconciliation of the observer configuration from Git.
 - Both Applications reporting **Synced** and **Healthy** under their assigned AppProjects.
+- A deployed monitoring Helm release with ready monitoring components and bound persistent volume claims.
+- Successful Grafana login and populated Kubernetes resource and network dashboards.
+- Prometheus reporting successful scrapes for kubelet metrics, cAdvisor metrics, and probe metrics.
+- Grafana displaying development CPU and memory utilisation against both requests and limits.
+- Grafana remaining ready with zero restarts during an extended dashboard session after its memory budget was increased.
+- Kubernetes replacing the Prometheus pod and returning it to `2/2 Running`.
+- A historical CPU-request query returning the same value before and promptly after the Prometheus pod replacement.
 
 A passing scan reflects the selected severities and vulnerability database available at scan time. Findings can change as the database is updated.
+
+Dashboard values are observations at a particular time. They do not establish performance under load.
 
 ### Reliability observations
 
@@ -165,9 +211,13 @@ Controller DNS failures and kindnet API watch timeouts occurred during local ope
 
 The underlying causes remain unresolved. These recoveries do not establish a permanent fix. The [development security guide](docs/development-security.md) records the network-controller incident and diagnostic commands.
 
+Grafana initially experienced startup failures and later reported `OOMKilled` under its original memory limit. Adding a startup probe and increasing its main container's memory budget resolved the observed restarts during subsequent verification. The [monitoring guide](docs/monitoring.md) records these settings and diagnostic commands.
+
+A CI build also encountered Docker Hub `429 Too Many Requests` responses while resolving the Python base image. Changing the base image source to ECR Public was followed by successful local and CI builds.
+
 ## Getting started
 
-Use Docker, kind, kubectl, and Git. Start with the [local development guide](docs/local-development.md) for prerequisites, cluster creation, and local recovery.
+Use Docker, kind, kubectl, and Git. Helm is also required for the monitoring installation. Start with the [local development guide](docs/local-development.md) for prerequisites, cluster creation, and local recovery.
 
 Clone the repository if needed, then run the remaining commands from its root:
 
@@ -268,6 +318,18 @@ Expected response:
 
 Port forwarding provides administrative access for local inspection. Use Pod-to-Pod traffic tests to verify the network policy, as described in the security guide.
 
+### Install monitoring
+
+Follow the [monitoring guide](docs/monitoring.md) to create the monitoring namespace and Grafana administrator Secret.
+
+Once the Secret exists, install or upgrade the pinned Helm release:
+
+```bash
+bash platform/components/monitoring/install.sh
+```
+
+The guide includes readiness checks, Windows browser access through WSL, dashboard navigation, and the metric-history recovery test.
+
 ## Documentation
 
 | Guide | Coverage |
@@ -276,6 +338,7 @@ Port forwarding provides administrative access for local inspection. Use Pod-to-
 | [Local development](docs/local-development.md) | Local setup, verification, access, and recovery. |
 | [Image delivery](docs/image-delivery.md) | CI checks, the vulnerability gate, release identity, image selection, and deployment verification. |
 | [Development security](docs/development-security.md) | Resource budgets, container settings, network restrictions, observer permissions, and recovery observations. |
+| [Monitoring](docs/monitoring.md) | Helm installation, Grafana access, resource dashboards, persistent storage, troubleshooting, and metric-history recovery. |
 
 ## Project roadmap
 
@@ -285,9 +348,21 @@ Port forwarding provides administrative access for local inspection. Use Pod-to-
 | Workload | Local Kubernetes cluster, reference service, internal routing, and health probes | Complete — local baseline |
 | Delivery | CI checks, vulnerability scanning, image publishing, GitOps deployment, and drift correction | In progress — core workflow verified; controller reliability investigation remains |
 | Guardrails | Resource policies, scoped deployment permissions, environment boundaries, and security controls | In progress — resource, runtime, network, and observer access controls verified |
-| Operations | Metrics, dashboards, and expanded recovery procedures | Planned |
+| Operations | Metrics, dashboards, alerting, and expanded recovery procedures | In progress — monitoring baseline and metric-history recovery across pod replacement verified |
 
-Further work includes additional environments, external routing and TLS, autoscaling, human authentication and access provisioning, secrets management, networking reliability, and observability.
+The monitoring baseline milestone is complete: installation, resource dashboards, Grafana stability checks, and retention of historical metrics across a Prometheus pod replacement have been verified.
+
+Further work includes:
+
+- Additional environments and promotion between them.
+- External routing and TLS.
+- Autoscaling and workload verification under load.
+- Human authentication and access provisioning.
+- Managed application secrets.
+- Investigation of recurring controller DNS and networking issues.
+- Application-specific HTTP metrics.
+- Alert notification delivery.
+- Backup restoration and recovery after cluster loss.
 
 The current service has no secret dependency. A managed application-secret system has not been implemented. The container filesystem also remains writable.
 
@@ -311,6 +386,7 @@ The current service has no secret dependency. A managed application-secret syste
 │   ├── development-security.md            # Controls, verification, and limitations
 │   ├── image-delivery.md                  # Image checks and release selection
 │   ├── local-development.md               # Local setup and recovery
+│   ├── monitoring.md                      # Dashboards, storage, and recovery checks
 │   └── assets/
 │       ├── delivery-flow.gif              # Target delivery illustration
 │       └── local-cluster.gif              # Local environment illustration
@@ -319,9 +395,13 @@ The current service has no secret dependency. A managed application-secret syste
     │   ├── development-environment.yaml   # Environment resource reconciliation
     │   └── reference-service-development.yaml
     ├── components/
-    │   └── argocd/
-    │       ├── kustomization.yaml         # Pinned Argo CD installation
-    │       └── namespace.yaml             # Argo CD namespace
+    │   ├── argocd/
+    │   │   ├── kustomization.yaml         # Pinned Argo CD installation
+    │   │   └── namespace.yaml             # Argo CD namespace
+    │   └── monitoring/
+    │       ├── install.sh                 # Pinned Helm installation and upgrades
+    │       ├── namespace.yaml             # Monitoring namespace
+    │       └── values.yaml                # Resources, storage, and Grafana settings
     ├── environments/
     │   └── development/
     │       ├── limit-range.yaml           # Default container resource settings
@@ -344,9 +424,10 @@ Application source and image packaging live under `apps/`. Shared platform insta
 ---
 
 <p align="center">
-  <strong>Current milestone: scanned GitOps release with verified development controls.</strong><br>
+  <strong>Current milestone: scanned GitOps delivery, verified development controls, and persistent resource monitoring.</strong><br>
   <a href="#getting-started">Run the local platform</a> &nbsp;·&nbsp;
   <a href="docs/image-delivery.md">Follow the release process</a> &nbsp;·&nbsp;
   <a href="docs/development-security.md">Inspect security controls</a> &nbsp;·&nbsp;
+  <a href="docs/monitoring.md">Inspect monitoring</a> &nbsp;·&nbsp;
   <a href="https://github.com/Rano1000/internal-developer-platform/actions">View delivery runs</a>
 </p>
