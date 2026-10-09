@@ -38,6 +38,18 @@ jobs:
           curl --fail --silent --show-error --max-time 5 \
             http://127.0.0.1:8080/
 
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.75.0
+          scan-type: image
+          image-ref: reference-service:ci
+          scanners: vuln
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "1"
+
       - name: Log in to GHCR
         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         env:
