@@ -4,7 +4,7 @@ metadata:
   name: development-environment
   namespace: argocd
 spec:
-  description: Namespace and resource policies for the development environment
+  description: Namespace, resource policies, and access controls for the development environment
   sourceRepos:
     - https://github.com/Rano1000/internal-developer-platform.git
   destinations:
@@ -19,3 +19,9 @@ spec:
       kind: ResourceQuota
     - group: ""
       kind: LimitRange
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
