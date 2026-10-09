@@ -1,13 +1,15 @@
-FROM python:3.14.8-slim
+FROM python:3.14.8-alpine3.24
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt \
+    && python -m pip uninstall --yes pip
 
-RUN useradd --create-home --uid 10001 --user-group appuser
+RUN addgroup -g 10001 appuser \
+    && adduser -D -u 10001 -G appuser -h /home/appuser appuser
 
 COPY app.py .
 
